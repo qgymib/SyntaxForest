@@ -1,4 +1,5 @@
 mod method;
+use lsp_types::request::Request;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     const PROG_NAME: &str = env!("CARGO_PKG_NAME");
@@ -47,13 +48,47 @@ fn main_loop(
                     method::shutdown::shutdown(&mut backend)?;
                     return Ok(());
                 }
+
+                handle_request(&mut backend, &connection, req)?;
             }
 
-            lsp_server::Message::Response(rsp) => {}
+            lsp_server::Message::Response(_rsp) => {}
 
-            lsp_server::Message::Notification(nfy) => {}
+            lsp_server::Message::Notification(_nfy) => {}
         }
     }
+
+    Ok(())
+}
+
+fn handle_request(
+    rt: &mut method::LspBackend,
+    conn: &lsp_server::Connection,
+    req: lsp_server::Request,
+) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+    let id = req.id.clone();
+    let mut rsp = match req.method.as_str() {
+        lsp_types::request::GotoDefinition::METHOD => {
+            let p = serde_json::from_value(req.params)?;
+            method::goto_definition::goto_definition(rt, p)?
+        },
+
+        // Method not found.
+        _ => {
+            lsp_server::Response {
+                id: 0.into(),
+                result: None,
+                error: Some(lsp_server::ResponseError {
+                    code: lsp_server::ErrorCode::MethodNotFound as i32,
+                    message: format!("method not found: {}", req.method),
+                    data: None,
+                }),
+            }
+        }
+    };
+
+    rsp.id = id;
+    conn.sender.send(lsp_server::Message::Response(rsp))?;
 
     Ok(())
 }

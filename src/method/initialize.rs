@@ -73,9 +73,9 @@ fn copy_workspace_folder(dst: &mut LspBackend, src: &InitializeParams) {
 }
 
 /// Get the default server capabilities.
-/// 
+///
 /// Returns
-/// 
+///
 /// + `ServerCapabilities` - The default server capabilities.
 fn get_server_capacity() -> ServerCapabilities {
     return ServerCapabilities {
