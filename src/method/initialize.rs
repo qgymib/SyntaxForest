@@ -1,30 +1,54 @@
-use tower_lsp::lsp_types::*;
+use lsp_types::*;
 
-use super::LspErrorCode;
+use super::LspBackend;
 
-pub async fn initialize(
-    backend: &crate::LspBackend,
-    params: InitializeParams,
-) -> tower_lsp::jsonrpc::Result<InitializeResult> {
-    let mut rt = backend.runtime.lock().await;
-    copy_workspace_folder(&mut rt, &params);
+pub fn initialize(
+    rt: &mut LspBackend,
+    conn: &lsp_server::Connection,
+) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+    let server_capabilities = serde_json::to_value(get_server_capacity()).unwrap();
+    let initialization_params = match conn.initialize(server_capabilities) {
+        Ok(it) => it,
+        Err(e) => {
+            return Err(e.into());
+        }
+    };
 
-    if check_position_encoding_kind(&params) == false {
-        return Err(tower_lsp::jsonrpc::Error {
-            code: tower_lsp::jsonrpc::ErrorCode::ServerError(LspErrorCode::RequestFailed.code()),
-            message: std::borrow::Cow::Borrowed("Server only support utf-8 encoding"),
-            data: None,
-        });
-    }
+    // Parse the initialization parameters.
+    let initialization_params: lsp_types::InitializeParams =
+        serde_json::from_value(initialization_params)?;
+    copy_workspace_folder(rt, &initialization_params);
 
-    return Ok(InitializeResult {
-        server_info: Some(ServerInfo {
-            name: rt.prog_name.clone(),
-            version: Some(rt.prog_version.clone()),
-        }),
-        capabilities: get_server_capacity(),
-        ..Default::default()
-    });
+    // Create the database.
+    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS files (
+            path TEXT PRIMARY KEY,
+            mtime INTEGER,
+            ptime INTEGER,
+        );
+        CREATE TABLE IF NOT EXISTS tags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type INTEGER,
+            beg_row INTEGER,
+            beg_col INTEGER,
+            end_row INTEGER,
+            end_col INTEGER,
+            FOREIGN KEY(file) REFERENCES files(path),
+            name TEXT,
+        );
+        CREATE TABLE IF NOT EXISTS xrefs (
+            FOREIGN KEY(name) REFERENCES tags(id),
+            FOREIGN KEY(hold) REFERENCES tags(id),
+        )",
+        (),
+    )
+    .unwrap();
+
+    // Assign the database to the runtime.
+    rt.db = Some(std::rc::Rc::new(conn));
+
+    Ok(())
 }
 
 /// Safe workspace folders from client initialize params.
@@ -33,7 +57,7 @@ pub async fn initialize(
 ///
 /// + `dst` - A mut reference to Runtime.
 /// + `src` - Reference to InitializeParams
-fn copy_workspace_folder(dst: &mut crate::LspRuntime, src: &InitializeParams) {
+fn copy_workspace_folder(dst: &mut LspBackend, src: &InitializeParams) {
     match &src.root_uri {
         Some(value) => dst.workspace_folders.push(WorkspaceFolder {
             name: String::from(""),
@@ -48,26 +72,11 @@ fn copy_workspace_folder(dst: &mut crate::LspRuntime, src: &InitializeParams) {
     };
 }
 
-fn check_position_encoding_kind(src: &InitializeParams) -> bool {
-    let kind_utf_8 = "utf-8";
-
-    match &src.capabilities.general {
-        Some(cap) => match &cap.position_encodings {
-            Some(kinds) => {
-                for ele in kinds {
-                    if ele.as_str() == kind_utf_8 {
-                        return true;
-                    }
-                }
-            }
-            None => (),
-        },
-        None => (),
-    }
-
-    return false;
-}
-
+/// Get the default server capabilities.
+/// 
+/// Returns
+/// 
+/// + `ServerCapabilities` - The default server capabilities.
 fn get_server_capacity() -> ServerCapabilities {
     return ServerCapabilities {
         position_encoding: Some(PositionEncodingKind::UTF8),

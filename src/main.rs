@@ -1,44 +1,14 @@
 mod method;
 
-#[derive(Debug)]
-struct LspRuntime {
-    /// The name of the program.
-    prog_name: String,
-
-    /// The version of the program.
-    prog_version: String,
-
-    /// The list of workspace folders.
-    workspace_folders: Vec<tower_lsp::lsp_types::WorkspaceFolder>,
-
-    /// The database.
-    db: rusqlite::Connection,
-}
-
-#[derive(Debug)]
-pub struct LspBackend {
-    client: tower_lsp::Client,
-    runtime: tokio::sync::Mutex<LspRuntime>,
-}
-
-#[tower_lsp::async_trait]
-impl tower_lsp::LanguageServer for LspBackend {
-    async fn initialize(
-        &self,
-        params: tower_lsp::lsp_types::InitializeParams,
-    ) -> tower_lsp::jsonrpc::Result<tower_lsp::lsp_types::InitializeResult> {
-        return method::initialize::initialize(self, params).await;
-    }
-
-    async fn shutdown(&self) -> tower_lsp::jsonrpc::Result<()> {
-        Ok(())
-    }
-}
-
-#[tokio::main]
-async fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     const PROG_NAME: &str = env!("CARGO_PKG_NAME");
     const PROG_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+    let mut backend = method::LspBackend {
+        prog_name: PROG_NAME.to_string(),
+        prog_version: PROG_VERSION.to_string(),
+        ..Default::default()
+    };
 
     // Initialize logging
     tracing_subscriber::fmt()
@@ -47,47 +17,43 @@ async fn main() {
     tracing::info!("{} v{}", PROG_NAME, PROG_VERSION);
     tracing::info!("PID: {}", std::process::id());
 
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS files (
-            path TEXT PRIMARY KEY,
-            mtime INTEGER,
-            ptime INTEGER,
-        );
-        CREATE TABLE IF NOT EXISTS tags (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type INTEGER,
-            beg_row INTEGER,
-            beg_col INTEGER,
-            end_row INTEGER,
-            end_col INTEGER,
-            FOREIGN KEY(file) REFERENCES files(path),
-            name TEXT,
-        );
-        CREATE TABLE IF NOT EXISTS xrefs (
-            FOREIGN KEY(name) REFERENCES tags(id),
-            FOREIGN KEY(hold) REFERENCES tags(id),
-        )",
-        (),
-    )
-    .unwrap();
+    // Create the transport. Includes the stdio (stdin and stdout) versions but this could
+    // also be implemented to use sockets or HTTP.
+    let (connection, io_threads) = lsp_server::Connection::stdio();
 
-    // Generate the LSP service.
-    let runtime = tokio::sync::Mutex::new(LspRuntime {
-        prog_name: PROG_NAME.to_string(),
-        prog_version: PROG_VERSION.to_string(),
-        workspace_folders: Vec::new(),
-        db: conn,
-    });
-    let (service, socket) = tower_lsp::LspService::new(|client| LspBackend {
-        client: client,
-        runtime: runtime,
-    });
+    // Initialize the server.
+    match method::initialize::initialize(&mut backend, &connection) {
+        Ok(_) => {}
+        Err(e) => {
+            io_threads.join()?;
+            return Err(e.into());
+        }
+    }
 
-    // Start the LSP server on stdio.
-    let stdin = tokio::io::stdin();
-    let stdout = tokio::io::stdout();
-    tower_lsp::Server::new(stdin, stdout, socket)
-        .serve(service)
-        .await;
+    main_loop(backend, connection)?;
+    io_threads.join()?;
+
+    Ok(())
+}
+
+fn main_loop(
+    mut backend: method::LspBackend,
+    connection: lsp_server::Connection,
+) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+    for msg in &connection.receiver {
+        match msg {
+            lsp_server::Message::Request(req) => {
+                if connection.handle_shutdown(&req)? {
+                    method::shutdown::shutdown(&mut backend)?;
+                    return Ok(());
+                }
+            }
+
+            lsp_server::Message::Response(rsp) => {}
+
+            lsp_server::Message::Notification(nfy) => {}
+        }
+    }
+
+    Ok(())
 }
