@@ -17,9 +17,12 @@ pub struct LspConfig {
         long,
         conflicts_with = "stdio",
         help = "Uses a socket as the communication channel",
-        long_help = "The LSP server start as TCP client and connect to the specified port."
+        long_help = "The LSP server start as TCP client and connect to the specified port"
     )]
     pub port: Option<u16>,
+
+    #[arg(long, value_name = "PATH", help = "Specifies a database file to use")]
+    pub dbfile: Option<String>,
 
     #[arg(
         long,
@@ -32,11 +35,32 @@ pub struct LspConfig {
         long,
         value_name = "STRING",
         help = "Set log leve",
-        long_help = "Possible values are: [OFF | TRACE | DEBUG | INFO | WARN | ERROR]. By default `INFO` is used."
+        long_help = "Possible values are: [OFF | TRACE | DEBUG | INFO | WARN | ERROR] (By default `INFO` is used)"
     )]
     pub loglevel: Option<String>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct LspRuntime {
+    /// The list of workspace folders.
+    pub workspace_folders: Vec<lsp_types::WorkspaceFolder>,
+
+    /// The database.
+    pub db: Option<std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>>,
+
+    /// File association to language parser.
+    pub file_association_table: std::collections::BTreeMap<String, tree_sitter::Language>,
+}
+
+/// Start the LSP server.
+///
+/// # Arguments
+///
+/// + `config` - The LSP configuration
+///
+/// # Returns
+///
+/// + `Result<(), Box<dyn std::error::Error + Sync + Send>>`
 pub fn start_lsp(config: &LspConfig) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     const PROG_NAME: &str = env!("CARGO_PKG_NAME");
     const PROG_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -56,22 +80,17 @@ pub fn start_lsp(config: &LspConfig) -> Result<(), Box<dyn std::error::Error + S
 
     // Initialize the server.
     tracing::info!("initialize...");
-
-    let mut backend = method::LspBackend {
-        prog_name: PROG_NAME.to_string(),
-        prog_version: PROG_VERSION.to_string(),
-        ..Default::default()
-    };
-    match method::initialize::initialize(&mut backend, &connection) {
-        Ok(_) => {}
+    let runtime = match method::initialize::initialize(&connection, config) {
+        Ok(v) => v,
         Err(e) => {
             io_threads.join()?;
             return Err(e.into());
         }
-    }
+    };
 
+    // Start the server.
     tracing::info!("starting lsp");
-    message_loop(backend, connection)?;
+    message_loop(runtime, connection)?;
     io_threads.join()?;
 
     Ok(())
@@ -118,8 +137,19 @@ fn setup_logging_system(config: &LspConfig, prog_name: &str) {
     std::panic::set_hook(Box::new(tracing_panic::panic_hook));
 }
 
+/// The main message loop.
+///
+/// # Arguments
+///
+/// + `backend` - A mut reference to LspRuntime
+/// + `connection` - A reference to lsp_server::Connection
+///
+/// # Returns
+///
+/// + `Result<(), Box<dyn std::error::Error + Sync + Send>>`
+///
 fn message_loop(
-    mut backend: method::LspBackend,
+    mut backend: LspRuntime,
     connection: lsp_server::Connection,
 ) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     for msg in &connection.receiver {
@@ -143,7 +173,7 @@ fn message_loop(
 }
 
 fn handle_request(
-    rt: &mut method::LspBackend,
+    rt: &mut LspRuntime,
     conn: &lsp_server::Connection,
     req: lsp_server::Request,
 ) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {

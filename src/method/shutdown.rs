@@ -1,5 +1,5 @@
-use super::LspBackend;
-
-pub fn shutdown(_rt: &mut LspBackend) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+pub fn shutdown(
+    _rt: &mut crate::LspRuntime,
+) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     Ok(())
 }

@@ -1,11 +1,9 @@
 use lsp_types::*;
 
-use super::LspBackend;
-
 pub fn initialize(
-    rt: &mut LspBackend,
     conn: &lsp_server::Connection,
-) -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
+    config: &crate::LspConfig,
+) -> Result<crate::LspRuntime, Box<dyn std::error::Error + Sync + Send>> {
     let server_capabilities = serde_json::to_value(get_server_capacity()).unwrap();
     let initialization_params = match conn.initialize(server_capabilities) {
         Ok(it) => it,
@@ -14,13 +12,18 @@ pub fn initialize(
         }
     };
 
+    let mut rt = crate::LspRuntime::default();
+
     // Parse the initialization parameters.
     let initialization_params: lsp_types::InitializeParams =
         serde_json::from_value(initialization_params)?;
-    copy_workspace_folder(rt, &initialization_params);
+    copy_workspace_folder(&mut rt, &initialization_params);
 
     // Create the database.
-    let conn = rusqlite::Connection::open("syntax_forest.db").unwrap();
+    let conn = match &config.dbfile {
+        Some(path) => rusqlite::Connection::open(path).unwrap(),
+        None => rusqlite::Connection::open_in_memory().unwrap(),
+    };
     conn.execute(
         "CREATE TABLE IF NOT EXISTS files (
             path TEXT PRIMARY KEY,
@@ -69,12 +72,12 @@ pub fn initialize(
     rt.file_association_table
         .insert(String::from(".h"), tree_sitter_c::language());
 
-    trigger_tree_sitter(rt);
+    trigger_tree_sitter(&mut rt);
 
-    Ok(())
+    Ok(rt)
 }
 
-fn trigger_tree_sitter(rt: &mut LspBackend) {
+fn trigger_tree_sitter(rt: &mut crate::LspRuntime) {
     let files = find_files_need_to_parser(rt).unwrap();
 
     for file in files {
@@ -83,7 +86,7 @@ fn trigger_tree_sitter(rt: &mut LspBackend) {
 }
 
 fn find_files_need_to_parser(
-    rt: &mut LspBackend,
+    rt: &mut crate::LspRuntime,
 ) -> Result<Vec<crate::utils::path::FileInfo>, Box<dyn std::error::Error + Sync + Send>> {
     let mut ret = Vec::new();
 
@@ -112,7 +115,7 @@ fn find_files_need_to_parser(
     Ok(ret)
 }
 
-fn do_tree_sitter(rt: &mut LspBackend, file: &crate::utils::path::FileInfo) {
+fn do_tree_sitter(rt: &mut crate::LspRuntime, file: &crate::utils::path::FileInfo) {
     let path = file.path.to_str().unwrap();
 
     for (k, v) in &rt.file_association_table {
@@ -124,7 +127,7 @@ fn do_tree_sitter(rt: &mut LspBackend, file: &crate::utils::path::FileInfo) {
 }
 
 fn do_tree_sitter_language(
-    rt: &LspBackend,
+    rt: &crate::LspRuntime,
     path: &std::path::PathBuf,
     lang: &tree_sitter::Language,
 ) {
@@ -159,7 +162,7 @@ fn do_tree_sitter_language(
     }
 }
 
-fn pick_node(_rt: &LspBackend, source: &String, node: tree_sitter::Node) {
+fn pick_node(_rt: &crate::LspRuntime, source: &String, node: tree_sitter::Node) {
     match node.kind_id() {
         _ => {
             let kind = node.kind();
@@ -178,7 +181,7 @@ fn pick_node(_rt: &LspBackend, source: &String, node: tree_sitter::Node) {
 ///
 /// + `dst` - A mut reference to Runtime.
 /// + `src` - Reference to InitializeParams
-fn copy_workspace_folder(dst: &mut LspBackend, src: &InitializeParams) {
+fn copy_workspace_folder(dst: &mut crate::LspRuntime, src: &InitializeParams) {
     match &src.root_uri {
         Some(value) => dst.workspace_folders.push(WorkspaceFolder {
             name: String::from(""),

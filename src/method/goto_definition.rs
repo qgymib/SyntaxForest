@@ -1,7 +1,5 @@
-use super::LspBackend;
-
 pub fn goto_definition(
-    _rt: &mut LspBackend,
+    _rt: &mut crate::LspRuntime,
     _params: lsp_types::GotoDefinitionParams,
 ) -> Result<lsp_server::Response, Box<dyn std::error::Error + Sync + Send>> {
     return Ok(lsp_server::Response {
