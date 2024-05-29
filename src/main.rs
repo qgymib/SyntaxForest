@@ -1,4 +1,5 @@
 mod method;
+mod utils;
 use lsp_types::request::Request;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
@@ -12,10 +13,16 @@ fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     };
 
     // Initialize logging
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .init();
-    tracing::info!("{} v{}", PROG_NAME, PROG_VERSION);
+    {
+        let logfile = format!("{}.log", PROG_NAME);
+        let file_appender = tracing_appender::rolling::never(".", logfile);
+        tracing_subscriber::fmt()
+            .with_writer(file_appender)
+            .with_ansi(false)
+            .init();
+        std::panic::set_hook(Box::new(tracing_panic::panic_hook));
+    }
+    tracing::info!("{} - v{}", PROG_NAME, PROG_VERSION);
     tracing::info!("PID: {}", std::process::id());
 
     // Create the transport. Includes the stdio (stdin and stdout) versions but this could
@@ -23,6 +30,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
     let (connection, io_threads) = lsp_server::Connection::stdio();
 
     // Initialize the server.
+    tracing::info!("initialize...");
     match method::initialize::initialize(&mut backend, &connection) {
         Ok(_) => {}
         Err(e) => {
@@ -31,6 +39,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Sync + Send>> {
         }
     }
 
+    tracing::info!("starting lsp");
     main_loop(backend, connection)?;
     io_threads.join()?;
 
@@ -71,20 +80,18 @@ fn handle_request(
         lsp_types::request::GotoDefinition::METHOD => {
             let p = serde_json::from_value(req.params)?;
             method::goto_definition::goto_definition(rt, p)?
-        },
+        }
 
         // Method not found.
-        _ => {
-            lsp_server::Response {
-                id: 0.into(),
-                result: None,
-                error: Some(lsp_server::ResponseError {
-                    code: lsp_server::ErrorCode::MethodNotFound as i32,
-                    message: format!("method not found: {}", req.method),
-                    data: None,
-                }),
-            }
-        }
+        _ => lsp_server::Response {
+            id: 0.into(),
+            result: None,
+            error: Some(lsp_server::ResponseError {
+                code: lsp_server::ErrorCode::MethodNotFound as i32,
+                message: format!("method not found: {}", req.method),
+                data: None,
+            }),
+        },
     };
 
     rsp.id = id;

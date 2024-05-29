@@ -25,7 +25,7 @@ pub fn initialize(
         "CREATE TABLE IF NOT EXISTS files (
             path TEXT PRIMARY KEY,
             mtime INTEGER,
-            ptime INTEGER,
+            ptime INTEGER
         );
         CREATE TABLE IF NOT EXISTS tags (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -35,11 +35,11 @@ pub fn initialize(
             end_row INTEGER,
             end_col INTEGER,
             FOREIGN KEY(file) REFERENCES files(path),
-            name TEXT,
+            name TEXT
         );
         CREATE TABLE IF NOT EXISTS xrefs (
             FOREIGN KEY(name) REFERENCES tags(id),
-            FOREIGN KEY(hold) REFERENCES tags(id),
+            FOREIGN KEY(hold) REFERENCES tags(id)
         )",
         (),
     )
@@ -47,6 +47,14 @@ pub fn initialize(
 
     // Assign the database to the runtime.
     rt.db = Some(std::rc::Rc::new(conn));
+
+    for folder in &rt.workspace_folders {
+        let file_path = folder.uri.to_file_path().unwrap();
+        let file_list = crate::utils::path::walk_with_gitignore(file_path)?;
+        for path in file_list {
+            tracing::info!("{:?}", path);
+        }
+    }
 
     Ok(())
 }
