@@ -20,7 +20,7 @@ pub fn initialize(
     copy_workspace_folder(rt, &initialization_params);
 
     // Create the database.
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
+    let conn = rusqlite::Connection::open("syntax_forest.db").unwrap();
     conn.execute(
         "CREATE TABLE IF NOT EXISTS files (
             path TEXT PRIMARY KEY,
@@ -34,10 +34,13 @@ pub fn initialize(
             beg_col INTEGER,
             end_row INTEGER,
             end_col INTEGER,
-            FOREIGN KEY(file) REFERENCES files(path),
-            name TEXT
+            file TEXT,
+            name TEXT,
+            FOREIGN KEY(file) REFERENCES files(path)
         );
         CREATE TABLE IF NOT EXISTS xrefs (
+            name INTEGER,
+            hold INTEGER,
             FOREIGN KEY(name) REFERENCES tags(id),
             FOREIGN KEY(hold) REFERENCES tags(id)
         )",
@@ -46,18 +49,65 @@ pub fn initialize(
     .unwrap();
 
     // Assign the database to the runtime.
-    rt.db = Some(std::rc::Rc::new(conn));
+    rt.db = Some(std::sync::Arc::new(std::sync::Mutex::new(conn)));
 
     for folder in &rt.workspace_folders {
         let file_path = folder.uri.to_file_path().unwrap();
         let file_list = crate::utils::path::walk_with_gitignore(file_path)?;
         for path in file_list {
-            tracing::info!("{:?}", path);
+            let db = rt.db.as_ref().unwrap().lock().unwrap();
+            db.execute(
+                "INSERT INTO files (path, mtime, ptime) VALUES (?1, ?2, 0)",
+                (&path.path.to_str(), &path.mtime),
+            )
+            .unwrap();
         }
     }
 
+    trigger_tree_sitter(rt);
+
     Ok(())
 }
+
+fn trigger_tree_sitter(rt: &mut LspBackend) {
+    let files = find_files_need_to_parser(rt).unwrap();
+
+    for file in files {
+        do_tree_sitter(rt, &file);
+    }
+}
+
+fn find_files_need_to_parser(
+    rt: &mut LspBackend,
+) -> Result<Vec<crate::utils::path::FileInfo>, Box<dyn std::error::Error + Sync + Send>> {
+    let mut ret = Vec::new();
+
+    let db = rt.db.as_ref().unwrap().lock().unwrap();
+
+    let cur_time = std::time::SystemTime::now();
+    let cur_time = cur_time.duration_since(std::time::UNIX_EPOCH).unwrap();
+    let cur_time = cur_time.as_secs() as i64;
+    let query_stmt = format!("SELECT * FROM files WHERE ptime < {}", cur_time);
+    let mut stmt = db.prepare(query_stmt.as_str()).unwrap();
+    let file_iter = stmt
+        .query_map([], |row| {
+            let path: String = row.get(0)?;
+            Ok(crate::utils::path::FileInfo {
+                path: path.into(),
+                mtime: row.get(1)?,
+                ptime: row.get(2)?,
+            })
+        })
+        .unwrap();
+
+    for file in file_iter {
+        ret.push(file.unwrap());
+    }
+
+    Ok(ret)
+}
+
+fn do_tree_sitter(_rt: &mut LspBackend, _file: &crate::utils::path::FileInfo) {}
 
 /// Safe workspace folders from client initialize params.
 ///
