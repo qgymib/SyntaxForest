@@ -64,6 +64,11 @@ pub fn initialize(
         }
     }
 
+    rt.file_association_table
+        .insert(String::from(".c"), tree_sitter_c::language());
+    rt.file_association_table
+        .insert(String::from(".h"), tree_sitter_c::language());
+
     trigger_tree_sitter(rt);
 
     Ok(())
@@ -107,7 +112,32 @@ fn find_files_need_to_parser(
     Ok(ret)
 }
 
-fn do_tree_sitter(_rt: &mut LspBackend, _file: &crate::utils::path::FileInfo) {}
+fn do_tree_sitter(rt: &mut LspBackend, file: &crate::utils::path::FileInfo) {
+    let path = file.path.to_str().unwrap();
+
+    for (k, v) in &rt.file_association_table {
+        if path.ends_with(k.as_str()) {
+            do_tree_sitter_language(rt, &file.path, v);
+            return;
+        }
+    }
+}
+
+fn do_tree_sitter_language(
+    rt: &LspBackend,
+    path: &std::path::PathBuf,
+    lang: &tree_sitter::Language,
+) {
+    // Create tree-sitter.
+    let mut parser = tree_sitter::Parser::new();
+    parser.set_language(lang).unwrap();
+
+    // Parse as AST-Tree.
+    let content = std::fs::read_to_string(path).unwrap();
+    let tree = parser.parse(content, None).unwrap();
+
+    let mut cursor = tree.walk();
+}
 
 /// Safe workspace folders from client initialize params.
 ///

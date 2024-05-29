@@ -14,6 +14,8 @@ pub struct LspBackend {
     pub workspace_folders: Vec<lsp_types::WorkspaceFolder>,
 
     /// The database.
-    //pub db: Option<std::rc::Rc<rusqlite::Connection>>,
     pub db: Option<std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>>,
+
+    /// File association to language parser.
+    pub file_association_table: std::collections::BTreeMap<String, tree_sitter::Language>,
 }

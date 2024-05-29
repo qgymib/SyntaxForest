@@ -31,11 +31,13 @@ pub fn walk_with_gitignore(path: std::path::PathBuf) -> std::io::Result<Vec<File
                 let mtime = mtime.duration_since(std::time::UNIX_EPOCH).unwrap();
                 let mtime = mtime.as_secs();
 
-                files_info.push(FileInfo {
-                    path: path,
-                    mtime: mtime as i64,
-                    ..Default::default()
-                });
+                if metadata.is_file() {
+                    files_info.push(FileInfo {
+                        path: path,
+                        mtime: mtime as i64,
+                        ..Default::default()
+                    });
+                }
             }
             Err(e) => tracing::error!("ERROR: {}", e),
         }
