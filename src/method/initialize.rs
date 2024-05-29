@@ -134,9 +134,42 @@ fn do_tree_sitter_language(
 
     // Parse as AST-Tree.
     let content = std::fs::read_to_string(path).unwrap();
-    let tree = parser.parse(content, None).unwrap();
+    let tree = parser.parse(&content, None).unwrap();
 
+    let mut recurse = true;
+    let mut finished = false;
     let mut cursor = tree.walk();
+
+    while !finished {
+        if recurse && cursor.goto_first_child() {
+            recurse = true;
+            let node = cursor.node();
+            pick_node(rt, &content, node);
+        } else {
+            if cursor.goto_next_sibling() {
+                recurse = true;
+                let node = cursor.node();
+                pick_node(rt, &content, node);
+            } else if cursor.goto_parent() {
+                recurse = false;
+            } else {
+                finished = true;
+            }
+        }
+    }
+}
+
+fn pick_node(_rt: &LspBackend, source: &String, node: tree_sitter::Node) {
+    match node.kind_id() {
+        _ => {
+            let kind = node.kind();
+            let text = match node.utf8_text(source.as_bytes()) {
+                Ok(v) => v,
+                Err(_) => "",
+            };
+            tracing::info!("dismiss kind:{}, text:{}", kind, text);
+        }
+    }
 }
 
 /// Safe workspace folders from client initialize params.
