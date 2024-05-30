@@ -146,13 +146,13 @@ fn do_tree_sitter_language(
     while !finished {
         if recurse && cursor.goto_first_child() {
             recurse = true;
-            let node = cursor.node();
-            pick_node(rt, &content, node);
+
+            pick_node(rt, &content, &mut cursor);
         } else {
             if cursor.goto_next_sibling() {
                 recurse = true;
-                let node = cursor.node();
-                pick_node(rt, &content, node);
+
+                pick_node(rt, &content, &mut cursor);
             } else if cursor.goto_parent() {
                 recurse = false;
             } else {
@@ -162,16 +162,22 @@ fn do_tree_sitter_language(
     }
 }
 
-fn pick_node(_rt: &crate::LspRuntime, source: &String, node: tree_sitter::Node) {
-    match node.kind_id() {
-        _ => {
-            let kind = node.kind();
-            let text = match node.utf8_text(source.as_bytes()) {
-                Ok(v) => v,
-                Err(_) => "",
-            };
-            tracing::info!("dismiss kind:{}, text:{}", kind, text);
-        }
+fn pick_node(_rt: &crate::LspRuntime, source: &String, cursor: &mut tree_sitter::TreeCursor) {
+    let node = cursor.node();
+    tracing::trace!(
+        "{}",
+        format!(
+            "{}`{}`({}): {}",
+            "  ".repeat(cursor.depth() as usize),
+            node.kind(),
+            node.kind_id(),
+            node.utf8_text(source.as_bytes()).unwrap()
+        )
+    );
+
+    match node.kind_id().try_into() {
+        Ok(crate::method::TreeSitterNodeKind::PreprocFunctionDef) => {}
+        Err(_) => {}
     }
 }
 
