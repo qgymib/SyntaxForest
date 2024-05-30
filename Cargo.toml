@@ -11,7 +11,6 @@ clap = { version = "4.5.4", features = ["default", "std", "color", "derive"] }
 ignore = "0.4.22"
 lsp-server = "0.7.6"
 lsp-types = "=0.95.0"
-regex = "1.10.4"
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_json = "1.0.117"
@@ -21,3 +20,7 @@ tracing-panic = "0.1.2"
 tracing-subscriber = "0.3.18"
 tree-sitter = "0.22.6"
 tree-sitter-c = "0.21.3"
+
+[dev-dependencies]
+regex = "1.10.4"
+rust-embed = { version = "8.4.0", features = ["debug-embed"] }
