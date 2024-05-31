@@ -1,3 +1,4 @@
+mod db;
 mod method;
 mod utils;
 
@@ -40,13 +41,13 @@ pub struct LspConfig {
     pub loglevel: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct LspRuntime {
     /// The list of workspace folders.
     pub workspace_folders: Vec<lsp_types::WorkspaceFolder>,
 
     /// The database.
-    pub db: Option<std::sync::Arc<std::sync::Mutex<rusqlite::Connection>>>,
+    pub db: crate::db::SqliteClient,
 
     /// File association to language parser.
     pub file_association_table: std::collections::BTreeMap<String, tree_sitter::Language>,

@@ -1,5 +1,7 @@
 use lsp_types::*;
 
+use crate::LspRuntime;
+
 pub fn initialize(
     conn: &lsp_server::Connection,
     config: &crate::LspConfig,
@@ -12,58 +14,36 @@ pub fn initialize(
         }
     };
 
-    let mut rt = crate::LspRuntime::default();
+    // Create the database.
+    let conn = match &config.dbfile {
+        Some(path) => rusqlite::Connection::open(path).unwrap(),
+        None => rusqlite::Connection::open_in_memory().unwrap(),
+    };
+    let client = crate::db::SqliteClient::new(conn);
+
+    let mut rt = LspRuntime {
+        workspace_folders: vec![],
+        db: client,
+        file_association_table: std::collections::BTreeMap::new(),
+    };
 
     // Parse the initialization parameters.
     let initialization_params: lsp_types::InitializeParams =
         serde_json::from_value(initialization_params)?;
     copy_workspace_folder(&mut rt, &initialization_params);
 
-    // Create the database.
-    let conn = match &config.dbfile {
-        Some(path) => rusqlite::Connection::open(path).unwrap(),
-        None => rusqlite::Connection::open_in_memory().unwrap(),
-    };
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS files (
-            path TEXT PRIMARY KEY,
-            mtime INTEGER,
-            ptime INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS tags (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            type INTEGER,
-            beg_row INTEGER,
-            beg_col INTEGER,
-            end_row INTEGER,
-            end_col INTEGER,
-            file TEXT,
-            name TEXT,
-            FOREIGN KEY(file) REFERENCES files(path)
-        );
-        CREATE TABLE IF NOT EXISTS xrefs (
-            name INTEGER,
-            hold INTEGER,
-            FOREIGN KEY(name) REFERENCES tags(id),
-            FOREIGN KEY(hold) REFERENCES tags(id)
-        )",
-        (),
-    )
-    .unwrap();
-
-    // Assign the database to the runtime.
-    rt.db = Some(std::sync::Arc::new(std::sync::Mutex::new(conn)));
+    rt.db.initialize_tables();
 
     for folder in &rt.workspace_folders {
         let file_path = folder.uri.to_file_path().unwrap();
         let file_list = crate::utils::path::walk_with_gitignore(file_path)?;
         for path in file_list {
-            let db = rt.db.as_ref().unwrap().lock().unwrap();
-            db.execute(
-                "INSERT INTO files (path, mtime, ptime) VALUES (?1, ?2, 0)",
-                (&path.path.to_str(), &path.mtime),
-            )
-            .unwrap();
+            rt.db
+                .execute(
+                    "INSERT INTO files (path, mtime, ptime) VALUES (?1, ?2, 0)",
+                    (&path.path.to_str(), &path.mtime),
+                )
+                .unwrap();
         }
     }
 
@@ -90,13 +70,11 @@ fn find_files_need_to_parser(
 ) -> Result<Vec<crate::utils::path::FileInfo>, Box<dyn std::error::Error + Sync + Send>> {
     let mut ret = Vec::new();
 
-    let db = rt.db.as_ref().unwrap().lock().unwrap();
-
     let cur_time = std::time::SystemTime::now();
     let cur_time = cur_time.duration_since(std::time::UNIX_EPOCH).unwrap();
     let cur_time = cur_time.as_secs() as i64;
     let query_stmt = format!("SELECT * FROM files WHERE ptime < {}", cur_time);
-    let mut stmt = db.prepare(query_stmt.as_str()).unwrap();
+    let mut stmt = rt.db.prepare(query_stmt.as_str()).unwrap();
     let file_iter = stmt
         .query_map([], |row| {
             let path: String = row.get(0)?;

@@ -1,15 +1,3 @@
-#[derive(Debug, Default, Clone)]
-pub struct FileInfo {
-    /// The path of the file.
-    pub path: std::path::PathBuf,
-
-    /// The modify time of the file.
-    pub mtime: i64,
-
-    /// The parser time of the file.
-    pub ptime: i64,
-}
-
 /// Get all items in the given path.
 ///
 /// # Arguments
@@ -19,7 +7,7 @@ pub struct FileInfo {
 /// # Returns
 ///
 /// + List of entry.
-pub fn walk_with_gitignore(path: std::path::PathBuf) -> std::io::Result<Vec<FileInfo>> {
+pub fn walk_with_gitignore(path: std::path::PathBuf) -> std::io::Result<Vec<crate::db::FileInfo>> {
     let mut files_info = Vec::new();
 
     for ret in ignore::Walk::new(path) {
@@ -32,7 +20,7 @@ pub fn walk_with_gitignore(path: std::path::PathBuf) -> std::io::Result<Vec<File
                 let mtime = mtime.as_secs();
 
                 if metadata.is_file() {
-                    files_info.push(FileInfo {
+                    files_info.push(crate::db::FileInfo {
                         path: path,
                         mtime: mtime as i64,
                         ..Default::default()
