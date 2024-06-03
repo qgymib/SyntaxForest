@@ -19,7 +19,7 @@ pub fn initialize(
         Some(path) => rusqlite::Connection::open(path).unwrap(),
         None => rusqlite::Connection::open_in_memory().unwrap(),
     };
-    let client = crate::db::SqliteClient::new(conn);
+    let client = crate::db::SqliteClient::new(conn)?;
 
     let mut rt = LspRuntime {
         workspace_folders: vec![],
@@ -32,20 +32,14 @@ pub fn initialize(
         serde_json::from_value(initialization_params)?;
     copy_workspace_folder(&mut rt, &initialization_params);
 
-    rt.db.initialize_tables();
-
+    let mut file_list = Vec::new();
     for folder in &rt.workspace_folders {
         let file_path = folder.uri.to_file_path().unwrap();
-        let file_list = crate::utils::path::walk_with_gitignore(file_path)?;
-        for path in file_list {
-            rt.db
-                .execute(
-                    "INSERT INTO files (path, mtime, ptime) VALUES (?1, ?2, 0)",
-                    (&path.path.to_str(), &path.mtime),
-                )
-                .unwrap();
-        }
+        let mut cwd_file_list = crate::utils::path::walk_with_gitignore(file_path)?;
+        file_list.append(&mut cwd_file_list);
     }
+
+    rt.db.startup_scan(&file_list)?;
 
     rt.file_association_table
         .insert(String::from(".c"), tree_sitter_c::language());
@@ -58,42 +52,14 @@ pub fn initialize(
 }
 
 fn trigger_tree_sitter(rt: &mut crate::LspRuntime) {
-    let files = find_files_need_to_parser(rt).unwrap();
+    let files = rt.db.pending_analysis().unwrap();
 
     for file in files {
         do_tree_sitter(rt, &file);
     }
 }
 
-fn find_files_need_to_parser(
-    rt: &mut crate::LspRuntime,
-) -> Result<Vec<crate::utils::path::FileInfo>, Box<dyn std::error::Error + Sync + Send>> {
-    let mut ret = Vec::new();
-
-    let cur_time = std::time::SystemTime::now();
-    let cur_time = cur_time.duration_since(std::time::UNIX_EPOCH).unwrap();
-    let cur_time = cur_time.as_secs() as i64;
-    let query_stmt = format!("SELECT * FROM files WHERE ptime < {}", cur_time);
-    let mut stmt = rt.db.prepare(query_stmt.as_str()).unwrap();
-    let file_iter = stmt
-        .query_map([], |row| {
-            let path: String = row.get(0)?;
-            Ok(crate::utils::path::FileInfo {
-                path: path.into(),
-                mtime: row.get(1)?,
-                ptime: row.get(2)?,
-            })
-        })
-        .unwrap();
-
-    for file in file_iter {
-        ret.push(file.unwrap());
-    }
-
-    Ok(ret)
-}
-
-fn do_tree_sitter(rt: &mut crate::LspRuntime, file: &crate::utils::path::FileInfo) {
+fn do_tree_sitter(rt: &mut crate::LspRuntime, file: &crate::db::FileInfo) {
     let path = file.path.to_str().unwrap();
 
     for (k, v) in &rt.file_association_table {

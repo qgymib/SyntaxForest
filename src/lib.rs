@@ -84,7 +84,6 @@ pub fn start_lsp(config: &LspConfig) -> Result<(), Box<dyn std::error::Error + S
     let runtime = match method::initialize::initialize(&connection, config) {
         Ok(v) => v,
         Err(e) => {
-            io_threads.join()?;
             return Err(e.into());
         }
     };
