@@ -1,8 +1,18 @@
 mod db;
 mod method;
+mod syntax;
 mod utils;
 
 use lsp_types::request::Request;
+
+/// The error type used in this crate.
+#[derive(Debug)]
+pub enum Error {
+    Unknown,
+}
+
+/// The result type used in this crate.
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[derive(Debug, clap::Parser, Default, Clone)]
 #[command(author, version, about, long_about = None)]
@@ -50,7 +60,7 @@ pub struct LspRuntime {
     pub db: crate::db::SqliteClient,
 
     /// File association to language parser.
-    pub file_association_table: std::collections::BTreeMap<String, tree_sitter::Language>,
+    pub parser: crate::syntax::SyntaxParser,
 }
 
 /// Start the LSP server.

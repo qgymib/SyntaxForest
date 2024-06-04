@@ -24,7 +24,7 @@ pub fn initialize(
     let mut rt = LspRuntime {
         workspace_folders: vec![],
         db: client,
-        file_association_table: std::collections::BTreeMap::new(),
+        parser: crate::syntax::SyntaxParser::new(),
     };
 
     // Parse the initialization parameters.
@@ -38,13 +38,9 @@ pub fn initialize(
         let mut cwd_file_list = crate::utils::path::walk_with_gitignore(file_path)?;
         file_list.append(&mut cwd_file_list);
     }
+    let file_list = rt.parser.filter_file_suffix(&file_list);
 
     rt.db.startup_scan(&file_list)?;
-
-    rt.file_association_table
-        .insert(String::from(".c"), tree_sitter_c::language());
-    rt.file_association_table
-        .insert(String::from(".h"), tree_sitter_c::language());
 
     trigger_tree_sitter(&mut rt);
 
@@ -55,73 +51,7 @@ fn trigger_tree_sitter(rt: &mut crate::LspRuntime) {
     let files = rt.db.pending_analysis().unwrap();
 
     for file in files {
-        do_tree_sitter(rt, &file);
-    }
-}
-
-fn do_tree_sitter(rt: &mut crate::LspRuntime, file: &crate::db::FileInfo) {
-    let path = file.path.to_str().unwrap();
-
-    for (k, v) in &rt.file_association_table {
-        if path.ends_with(k.as_str()) {
-            do_tree_sitter_language(rt, &file.path, v);
-            return;
-        }
-    }
-}
-
-fn do_tree_sitter_language(
-    rt: &crate::LspRuntime,
-    path: &std::path::PathBuf,
-    lang: &tree_sitter::Language,
-) {
-    // Create tree-sitter.
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(lang).unwrap();
-
-    // Parse as AST-Tree.
-    let content = std::fs::read_to_string(path).unwrap();
-    let tree = parser.parse(&content, None).unwrap();
-
-    let mut recurse = true;
-    let mut finished = false;
-    let mut cursor = tree.walk();
-
-    while !finished {
-        if recurse && cursor.goto_first_child() {
-            recurse = true;
-
-            pick_node(rt, &content, &mut cursor);
-        } else {
-            if cursor.goto_next_sibling() {
-                recurse = true;
-
-                pick_node(rt, &content, &mut cursor);
-            } else if cursor.goto_parent() {
-                recurse = false;
-            } else {
-                finished = true;
-            }
-        }
-    }
-}
-
-fn pick_node(_rt: &crate::LspRuntime, source: &String, cursor: &mut tree_sitter::TreeCursor) {
-    let node = cursor.node();
-    tracing::trace!(
-        "{}",
-        format!(
-            "{}`{}`({}): {}",
-            "  ".repeat(cursor.depth() as usize),
-            node.kind(),
-            node.kind_id(),
-            node.utf8_text(source.as_bytes()).unwrap()
-        )
-    );
-
-    match node.kind_id().try_into() {
-        Ok(crate::method::TreeSitterNodeKind::PreprocFunctionDef) => {}
-        Err(_) => {}
+        rt.parser.parser(&file.path, &rt.db).unwrap();
     }
 }
 
